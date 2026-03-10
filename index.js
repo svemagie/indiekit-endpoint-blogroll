@@ -7,11 +7,47 @@ import { blogsController } from "./lib/controllers/blogs.js";
 import { sourcesController } from "./lib/controllers/sources.js";
 import { apiController } from "./lib/controllers/api.js";
 import { startSync, stopSync } from "./lib/sync/scheduler.js";
+import { importBookmarkUrl } from "./lib/bookmark-import.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const protectedRouter = express.Router();
 const publicRouter = express.Router();
+
+// Global hook router: intercepts POST requests site-wide to detect micropub
+// bookmark creations and auto-import the bookmarked site into the blogroll.
+// Mounted at "/" via contentNegotiationRoutes (runs before auth middleware).
+const bookmarkHookRouter = express.Router();
+bookmarkHookRouter.use((request, response, next) => {
+  response.on("finish", () => {
+    // Only act on successful POST creates (201 Created / 202 Accepted)
+    if (
+      request.method !== "POST" ||
+      (response.statusCode !== 201 && response.statusCode !== 202)
+    ) {
+      return;
+    }
+
+    // Ignore non-create actions (update, delete, undelete)
+    const action =
+      request.query?.action || request.body?.action || "create";
+    if (action !== "create") return;
+
+    // bookmark-of may be a top-level field (form-encoded / JF2 JSON)
+    // or nested inside properties (MF2 JSON format)
+    const bookmarkOf =
+      request.body?.["bookmark-of"] ||
+      request.body?.properties?.["bookmark-of"]?.[0];
+    if (!bookmarkOf) return;
+
+    const { application } = request.app.locals;
+    importBookmarkUrl(application, bookmarkOf).catch((err) =>
+      console.warn("[Blogroll] bookmark-import failed:", err.message)
+    );
+  });
+
+  next();
+});
 
 const defaults = {
   mountPath: "/blogrollapi",
@@ -52,6 +88,14 @@ export default class BlogrollEndpoint {
       iconName: "bookmark",
       requiresDatabase: true,
     };
+  }
+
+  /**
+   * Global middleware (mounted at "/") — intercepts micropub bookmark creations.
+   * Uses res.on("finish") so it never interferes with the request lifecycle.
+   */
+  get contentNegotiationRoutes() {
+    return bookmarkHookRouter;
   }
 
   /**
