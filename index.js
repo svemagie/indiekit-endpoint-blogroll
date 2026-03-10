@@ -40,8 +40,19 @@ bookmarkHookRouter.use((request, response, next) => {
       request.body?.properties?.["bookmark-of"]?.[0];
     if (!bookmarkOf) return;
 
+    // Extract category from any micropub body format:
+    //   form-encoded:  category=tech  or  category[]=tech&category[]=web
+    //   JF2 JSON:      { "category": ["tech", "web"] }
+    //   MF2 JSON:      { "properties": { "category": ["tech"] } }
+    const rawCategory =
+      request.body?.category ||
+      request.body?.properties?.category;
+    const category = Array.isArray(rawCategory)
+      ? rawCategory[0] || "bookmarks"
+      : rawCategory || "bookmarks";
+
     const { application } = request.app.locals;
-    importBookmarkUrl(application, bookmarkOf).catch((err) =>
+    importBookmarkUrl(application, bookmarkOf, category).catch((err) =>
       console.warn("[Blogroll] bookmark-import failed:", err.message)
     );
   });
