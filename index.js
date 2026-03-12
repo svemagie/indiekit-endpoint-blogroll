@@ -17,6 +17,11 @@ const publicRouter = express.Router();
 // Global hook router: intercepts POST requests site-wide to detect micropub
 // bookmark creations and auto-import the bookmarked site into the blogroll.
 // Mounted at "/" via contentNegotiationRoutes (runs before auth middleware).
+//
+// NOTE: When the Microsub plugin is installed it acts as the single source of
+// truth for bookmarks — it creates the feed subscription AND notifies the
+// blogroll via notifyBlogroll(). This hook therefore skips processing if
+// Microsub is available, acting only as a standalone fallback.
 const bookmarkHookRouter = express.Router();
 bookmarkHookRouter.use((request, response, next) => {
   response.on("finish", () => {
@@ -40,6 +45,14 @@ bookmarkHookRouter.use((request, response, next) => {
       request.body?.properties?.["bookmark-of"]?.[0];
     if (!bookmarkOf) return;
 
+    const { application } = request.app.locals;
+
+    // Microsub plugin is installed → it will handle this bookmark and notify
+    // the blogroll. Skip direct import to avoid duplicate entries.
+    if (application.collections?.has("microsub_channels")) {
+      return;
+    }
+
     // Extract category from any micropub body format:
     //   form-encoded:  category=tech  or  category[]=tech&category[]=web
     //   JF2 JSON:      { "category": ["tech", "web"] }
@@ -51,7 +64,6 @@ bookmarkHookRouter.use((request, response, next) => {
       ? rawCategory[0] || "bookmarks"
       : rawCategory || "bookmarks";
 
-    const { application } = request.app.locals;
     importBookmarkUrl(application, bookmarkOf, category).catch((err) =>
       console.warn("[Blogroll] bookmark-import failed:", err.message)
     );
