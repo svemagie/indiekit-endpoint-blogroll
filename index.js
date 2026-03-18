@@ -207,8 +207,52 @@ export default class BlogrollEndpoint {
     // Store database getter for controller access
     Indiekit.config.application.getBlogrollDb = () => Indiekit.database;
 
-    // Start background sync if database is available
+    // Auto-create a Microsub source if the Microsub plugin is installed
+    // and no microsub source exists yet — keeps blogroll in sync automatically
     if (Indiekit.config.application.mongodbUrl) {
+      const application = Indiekit.config.application;
+      const ensureMicrosubSource = async () => {
+        const db = application.getBlogrollDb();
+        if (!db) return;
+
+        if (!application.collections?.has("microsub_channels")) return;
+
+        const existing = await db
+          .collection("blogrollSources")
+          .findOne({ type: "microsub" });
+        if (existing) return;
+
+        const now = new Date().toISOString();
+        await db.collection("blogrollSources").insertOne({
+          type: "microsub",
+          name: "Microsub (auto)",
+          url: null,
+          opmlContent: null,
+          channelFilter: null,
+          categoryPrefix: "",
+          feedlandInstance: null,
+          feedlandUsername: null,
+          feedlandCategory: null,
+          enabled: true,
+          syncInterval: 60,
+          lastSyncAt: null,
+          lastSyncError: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+        console.log(
+          "[Blogroll] Auto-created Microsub source to keep blogroll in sync with Microsub subscriptions",
+        );
+      };
+
+      // Run after a short delay to let collections register
+      setTimeout(() => {
+        ensureMicrosubSource().catch((error) => {
+          console.error("[Blogroll] Failed to auto-create Microsub source:", error.message);
+        });
+      }, 10000);
+
+      // Start background sync
       startSync(Indiekit, this.options);
     }
   }
