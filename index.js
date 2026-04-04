@@ -7,70 +7,11 @@ import { blogsController } from "./lib/controllers/blogs.js";
 import { sourcesController } from "./lib/controllers/sources.js";
 import { apiController } from "./lib/controllers/api.js";
 import { startSync, stopSync } from "./lib/sync/scheduler.js";
-import { importBookmarkUrl } from "./lib/bookmark-import.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const protectedRouter = express.Router();
 const publicRouter = express.Router();
-
-// Global hook router: intercepts POST requests site-wide to detect micropub
-// bookmark creations and auto-import the bookmarked site into the blogroll.
-// Mounted at "/" via contentNegotiationRoutes (runs before auth middleware).
-//
-// NOTE: When the Microsub plugin is installed it acts as the single source of
-// truth for bookmarks — it creates the feed subscription AND notifies the
-// blogroll via notifyBlogroll(). This hook therefore skips processing if
-// Microsub is available, acting only as a standalone fallback.
-const bookmarkHookRouter = express.Router();
-bookmarkHookRouter.use((request, response, next) => {
-  response.on("finish", () => {
-    // Only act on successful POST creates (201 Created / 202 Accepted)
-    if (
-      request.method !== "POST" ||
-      (response.statusCode !== 201 && response.statusCode !== 202)
-    ) {
-      return;
-    }
-
-    // Ignore non-create actions (update, delete, undelete)
-    const action =
-      request.query?.action || request.body?.action || "create";
-    if (action !== "create") return;
-
-    // bookmark-of may be a top-level field (form-encoded / JF2 JSON)
-    // or nested inside properties (MF2 JSON format)
-    const bookmarkOf =
-      request.body?.["bookmark-of"] ||
-      request.body?.properties?.["bookmark-of"]?.[0];
-    if (!bookmarkOf) return;
-
-    const { application } = request.app.locals;
-
-    // Microsub plugin is installed → it will handle this bookmark and notify
-    // the blogroll. Skip direct import to avoid duplicate entries.
-    if (application.collections?.has("microsub_channels")) {
-      return;
-    }
-
-    // Extract category from any micropub body format:
-    //   form-encoded:  category=tech  or  category[]=tech&category[]=web
-    //   JF2 JSON:      { "category": ["tech", "web"] }
-    //   MF2 JSON:      { "properties": { "category": ["tech"] } }
-    const rawCategory =
-      request.body?.category ||
-      request.body?.properties?.category;
-    const category = Array.isArray(rawCategory)
-      ? rawCategory[0] || "bookmarks"
-      : rawCategory || "bookmarks";
-
-    importBookmarkUrl(application, bookmarkOf, category).catch((err) =>
-      console.warn("[Blogroll] bookmark-import failed:", err.message)
-    );
-  });
-
-  next();
-});
 
 const defaults = {
   mountPath: "/blogrollapi",
@@ -111,14 +52,6 @@ export default class BlogrollEndpoint {
       iconName: "bookmark",
       requiresDatabase: true,
     };
-  }
-
-  /**
-   * Global middleware (mounted at "/") — intercepts micropub bookmark creations.
-   * Uses res.on("finish") so it never interferes with the request lifecycle.
-   */
-  get contentNegotiationRoutes() {
-    return bookmarkHookRouter;
   }
 
   /**
